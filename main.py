@@ -5,9 +5,9 @@ import xml.etree.ElementTree as ET
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QTextEdit, QPushButton, 
                             QMessageBox, QProgressBar, QLabel, QSplashScreen,
-                            QFrame, QGridLayout, QLineEdit)
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Property, QPoint
-from PySide6.QtGui import QPixmap, QKeySequence, QShortcut, QFont, QPalette, QColor, QFontDatabase, QIcon
+                            QFrame, QGridLayout, QLineEdit, QScrollArea)
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Property, QPoint, QSize
+from PySide6.QtGui import QPixmap, QKeySequence, QShortcut, QFont, QPalette, QColor, QFontDatabase, QIcon, QImage
 from pathlib import Path
 import concurrent.futures
 import time
@@ -154,6 +154,163 @@ class FadeInWidget(QWidget):
         super().showEvent(event)
         self.animation.start()
 
+class SearchWindow(QMainWindow):
+    def __init__(self, product_data, parent=None):
+        super().__init__(parent)
+        self.product_data = product_data
+        self.setWindowTitle(f"Товар {product_data.get('Артикул', '')}")
+        self.setMinimumSize(800, 600)
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #1A1A1A;
+            }
+            QLabel {
+                color: #FFFFFF;
+                font-size: 14px;
+            }
+            QPushButton {
+                background-color: #2C2C2C;
+                color: white;
+                border: 1px solid #404040;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #353535;
+                border: 1px solid #505050;
+            }
+            QScrollArea {
+                border: none;
+            }
+        """)
+        
+        # Create central widget and layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+        
+        # Product information
+        info_frame = QFrame()
+        info_frame.setStyleSheet("""
+            QFrame {
+                background-color: #242424;
+                border-radius: 8px;
+                padding: 15px;
+            }
+        """)
+        info_layout = QVBoxLayout(info_frame)
+        
+        # Add product information in specified order
+        info_order = [
+            'Артикул',
+            'Товар',
+            'Модель',
+            'Цена',
+            'Старая Цена',
+            'Сезон',
+            'Цвет',
+            'Категория',
+            'Материал верха',
+            'Материал подошвы',
+            'Страна бренда',
+            'Пол',
+            'Размер'
+        ]
+        
+        for key in info_order:
+            value = product_data.get(key, 'Нет данных')
+            label = QLabel(f"{key}: {value}")
+            label.setStyleSheet("""
+                QLabel {
+                    padding: 5px 0;
+                }
+            """)
+            info_layout.addWidget(label)
+        
+        layout.addWidget(info_frame)
+        
+        # Images section
+        images_label = QLabel("Фотографии товара:")
+        layout.addWidget(images_label)
+        
+        # Scroll area for images
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        images_widget = QWidget()
+        images_layout = QHBoxLayout(images_widget)
+        
+        # Add images
+        for image_url in product_data.get('images', []):
+            image_frame = QFrame()
+            image_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #242424;
+                    border-radius: 8px;
+                    padding: 10px;
+                }
+            """)
+            image_layout = QVBoxLayout(image_frame)
+            
+            # Image label
+            image_label = QLabel()
+            image_label.setFixedSize(200, 200)
+            image_label.setAlignment(Qt.AlignCenter)
+            
+            # Download button
+            download_btn = QPushButton("Скачать")
+            download_btn.clicked.connect(lambda checked, url=image_url: self.download_image(url))
+            
+            image_layout.addWidget(image_label)
+            image_layout.addWidget(download_btn)
+            images_layout.addWidget(image_frame)
+            
+            # Load image in background
+            self.load_image(image_url, image_label)
+        
+        scroll_area.setWidget(images_widget)
+        layout.addWidget(scroll_area)
+        
+        # Download all button
+        download_all_btn = QPushButton("Скачать все фотографии")
+        download_all_btn.clicked.connect(self.download_all_images)
+        layout.addWidget(download_all_btn)
+    
+    def load_image(self, url, label):
+        def load():
+            try:
+                response = requests.get(url, headers=self.parent().headers)
+                image = QImage()
+                image.loadFromData(response.content)
+                pixmap = QPixmap.fromImage(image)
+                label.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            except Exception as e:
+                print(f"Error loading image: {str(e)}")
+        
+        # Run in background
+        import threading
+        threading.Thread(target=load).start()
+    
+    def download_image(self, url):
+        try:
+            response = requests.get(url, headers=self.parent().headers)
+            filename = url.split('/')[-1]
+            save_path = Path("products") / self.product_data.get('article', '') / "images" / filename
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(save_path, 'wb') as f:
+                f.write(response.content)
+            
+            QMessageBox.information(self, "Успех", f"Фотография сохранена в {save_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось скачать фотографию: {str(e)}")
+    
+    def download_all_images(self):
+        for image_url in self.product_data.get('images', []):
+            self.download_image(image_url)
+
 class ParserApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -170,6 +327,16 @@ class ParserApp(QMainWindow):
         # Создаем и показываем сплэш-скрин
         self.splash = ModernSplashScreen()
         self.splash.show()
+        
+        # Инициализируем компоненты
+        self.search_input = QLineEdit()
+        self.search_button = QPushButton("Найти товар")
+        self.article_input = QTextEdit()
+        self.article_input.setMinimumHeight(100)
+        self.info_area = QTextEdit()
+        self.info_area.setReadOnly(True)
+        self.progress_bar = QProgressBar()
+        self.status_label = QLabel()
         
         self.setWindowTitle("PARSER MAX 2")
         self.setMinimumSize(800, 600)
@@ -251,6 +418,14 @@ class ParserApp(QMainWindow):
         # Инициализируем XML данные
         self.xml_data = None
         
+        # Add search functionality
+        self.search_input.setPlaceholderText("Введите артикул для поиска")
+        self.search_button.clicked.connect(self.search_product)
+        
+        # Add search shortcut
+        search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        search_shortcut.activated.connect(self.search_product)
+        
         # Основной виджет
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -258,16 +433,16 @@ class ParserApp(QMainWindow):
         # Основной layout с отступами
         layout = QVBoxLayout(main_widget)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
+        layout.setSpacing(15)
         
         # Заголовок приложения
         title_label = QLabel("PARSER MAX 2")
         title_label.setStyleSheet(f"""
             QLabel {{
                 color: #FFFFFF;
-                font-size: 20px;
-                font-weight: normal;
-                padding: 10px;
+                font-size: 24px;
+                font-weight: bold;
+                padding: 15px;
                 font-family: "{self.font_family}";
             }}
         """)
@@ -276,45 +451,103 @@ class ParserApp(QMainWindow):
         # Создаем основной контейнер
         main_container = ModernFrame()
         main_layout = QVBoxLayout(main_container)
-        main_layout.setSpacing(15)
+        main_layout.setSpacing(20)
         
         # Обновляем стиль ModernFrame
         main_container.setStyleSheet("""
             ModernFrame {
                 background-color: #242424;
+                border-radius: 12px;
+                padding: 20px;
+            }
+        """)
+        
+        # Секция поиска товара
+        search_frame = ModernFrame()
+        search_frame.setStyleSheet("""
+            ModernFrame {
+                background-color: #2C2C2C;
                 border-radius: 8px;
                 padding: 15px;
             }
         """)
+        search_layout = QVBoxLayout(search_frame)
+        search_layout.setSpacing(10)
         
-        # Создаем поле ввода для списка артикулов
-        input_layout = QGridLayout()
-        input_layout.setSpacing(10)
+        search_title = QLabel("Найти информацию о товаре")
+        search_title.setStyleSheet(f"""
+            QLabel {{
+                color: #FFFFFF;
+                font-size: 16px;
+                font-weight: bold;
+                font-family: "{self.font_family}";
+            }}
+        """)
+        search_layout.addWidget(search_title)
         
-        input_label = QLabel("Артикулы товаров")
-        input_layout.addWidget(input_label, 0, 0)
+        search_container = QHBoxLayout()
+        self.search_input.setPlaceholderText("Введите артикул товара")
+        self.search_button.setText("🔍 Найти")
+        search_container.addWidget(self.search_input)
+        search_container.addWidget(self.search_button)
+        search_layout.addLayout(search_container)
         
-        self.article_input = QTextEdit()
-        self.article_input.setPlaceholderText("Введите артикулы товаров (каждый артикул с новой строки)")
-        self.article_input.setMinimumHeight(100)
-        input_layout.addWidget(self.article_input, 0, 1)
+        main_layout.addWidget(search_frame)
         
-        main_layout.addLayout(input_layout)
+        # Секция массовой загрузки
+        bulk_frame = ModernFrame()
+        bulk_frame.setStyleSheet("""
+            ModernFrame {
+                background-color: #2C2C2C;
+                border-radius: 8px;
+                padding: 15px;
+            }
+        """)
+        bulk_layout = QVBoxLayout(bulk_frame)
+        bulk_layout.setSpacing(10)
+        
+        bulk_title = QLabel("Скачать список товаров")
+        bulk_title.setStyleSheet(f"""
+            QLabel {{
+                color: #FFFFFF;
+                font-size: 16px;
+                font-weight: bold;
+                font-family: "{self.font_family}";
+            }}
+        """)
+        bulk_layout.addWidget(bulk_title)
+        
+        self.article_input.setPlaceholderText("Вставьте артикулы товаров (каждый артикул с новой строки)")
+        bulk_layout.addWidget(self.article_input)
         
         # Создаем кнопки
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         
-        # Кнопка поиска
-        search_button = QPushButton("🚀 Начать загрузку (Ctrl+Enter)")
+        # Обновляем текст и стиль кнопок
+        search_button = QPushButton("⚡ Начать загрузку (Ctrl+Enter)")
+        search_button.setStyleSheet("""
+            QPushButton {
+                padding: 10px 20px;
+                font-weight: bold;
+            }
+        """)
         search_button.clicked.connect(self.process_articles)
         
-        # Кнопка очистки
         clear_button = QPushButton("🗑️ Очистить")
+        clear_button.setStyleSheet("""
+            QPushButton {
+                padding: 10px 20px;
+            }
+        """)
         clear_button.clicked.connect(self.clear_all)
         
-        # Кнопка открытия папки
-        open_folder_button = QPushButton("📂 Перейти к файлам")
+        open_folder_button = QPushButton("📂 Открыть папку с файлами")
+        open_folder_button.setStyleSheet("""
+            QPushButton {
+                padding: 10px 20px;
+            }
+        """)
         open_folder_button.clicked.connect(self.open_products_folder)
         
         # Добавляем кнопки в layout
@@ -322,17 +555,10 @@ class ParserApp(QMainWindow):
         button_layout.addWidget(clear_button)
         button_layout.addWidget(open_folder_button)
         
-        # Создаем контейнер для кнопок
-        button_container = QWidget()
-        button_container.setLayout(button_layout)
-        main_layout.addWidget(button_container)
+        bulk_layout.addLayout(button_layout)
+        main_layout.addWidget(bulk_frame)
         
-        # Добавляем горячие клавиши
-        shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
-        shortcut.activated.connect(self.process_articles)
-        
-        # Создаем прогресс бар
-        self.progress_bar = QProgressBar()
+        # Прогресс бар
         self.progress_bar.setStyleSheet("""
             QProgressBar {
                 border: none;
@@ -340,6 +566,7 @@ class ParserApp(QMainWindow):
                 background-color: #363636;
                 height: 20px;
                 text-align: center;
+                margin-top: 10px;
             }
             QProgressBar::chunk {
                 background-color: #007AFF;
@@ -349,30 +576,44 @@ class ParserApp(QMainWindow):
         self.progress_bar.setVisible(False)
         main_layout.addWidget(self.progress_bar)
         
-        # Создаем область для отображения информации
-        info_container = ModernFrame()
-        info_layout = QVBoxLayout(info_container)
+        # Область для логов
+        info_frame = ModernFrame()
+        info_frame.setStyleSheet("""
+            ModernFrame {
+                background-color: #2C2C2C;
+                border-radius: 8px;
+                padding: 15px;
+            }
+        """)
+        info_layout = QVBoxLayout(info_frame)
+        info_layout.setSpacing(10)
         
-        info_label = QLabel("Лог операций")
-        info_layout.addWidget(info_label)
+        info_title = QLabel("Журнал операций")
+        info_title.setStyleSheet(f"""
+            QLabel {{
+                color: #FFFFFF;
+                font-size: 16px;
+                font-weight: bold;
+                font-family: "{self.font_family}";
+            }}
+        """)
+        info_layout.addWidget(info_title)
         
-        self.info_area = QTextEdit()
-        self.info_area.setReadOnly(True)
         self.info_area.setMinimumHeight(200)
         info_layout.addWidget(self.info_area)
         
-        main_layout.addWidget(info_container)
+        main_layout.addWidget(info_frame)
         
-        # Создаем статус бар
-        self.status_label = QLabel()
-        self.status_label.setStyleSheet("""
-            QLabel {
+        # Статус бар
+        self.status_label.setStyleSheet(f"""
+            QLabel {{
                 color: #FFFFFF;
-                padding: 10px;
-                border-radius: 4px;
+                padding: 12px;
+                border-radius: 6px;
                 background-color: #2C2C2C;
                 font-size: 13px;
-            }
+                font-family: "{self.font_family}";
+            }}
         """)
         main_layout.addWidget(self.status_label)
         
@@ -577,11 +818,6 @@ class ParserApp(QMainWindow):
         except Exception as e:
             self.update_status(f"❌ Ошибка при открытии папки: {str(e)}", True)
 
-    def init_app(self):
-        self.init_ui()
-        self.show()
-        self.splash.finish(self)
-    
     def init_ui(self):
         # Add button click animations
         for button in [search_button, clear_button, open_folder_button]:
@@ -622,6 +858,99 @@ class ParserApp(QMainWindow):
             }}
         """)
         QTimer.singleShot(200, lambda: self.info_area.setStyleSheet(original_style))
+
+    def search_product(self):
+        article = self.search_input.text().strip()
+        if not article:
+            QMessageBox.warning(self, "Ошибка", "Введите артикул товара")
+            return
+        
+        try:
+            # Find product in XML data
+            product_data = self.find_product_by_article(article)
+            if product_data:
+                # Show search window
+                search_window = SearchWindow(product_data, self)
+                search_window.show()
+            else:
+                QMessageBox.warning(self, "Ошибка", "Товар не найден")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Произошла ошибка при поиске товара: {str(e)}")
+    
+    def find_product_by_article(self, article):
+        try:
+            # Проверяем, загружены ли XML данные
+            if self.xml_data is None:
+                self.load_xml_data()
+                if self.xml_data is None:
+                    raise Exception("Не удалось загрузить каталог")
+
+            # Ищем товар в XML
+            product = None
+            for offer in self.xml_data.findall('.//offer'):
+                if offer.get('id') == article:
+                    product = offer
+                    break
+
+            if product is None:
+                return None
+
+            # Получаем основную информацию о товаре
+            name = product.find('name').text if product.find('name') is not None else "Нет данных"
+            price = product.find('price').text if product.find('price') is not None else "Нет данных"
+            oldprice = product.find('oldprice').text if product.find('oldprice') is not None else "Нет данных"
+            
+            # Собираем информацию из параметров
+            params = {
+                'Модель': 'Нет данных',
+                'Сезон': 'Нет данных',
+                'Цвет': 'Нет данных',
+                'Категория': 'Нет данных',
+                'Материал верха': 'Нет данных',
+                'Материал подошвы': 'Нет данных',
+                'Страна бренда': 'Нет данных',
+                'Пол': 'Нет данных'
+            }
+            
+            for param in product.findall('.//param'):
+                param_name = param.get('name')
+                if param_name in params:
+                    params[param_name] = param.text
+
+            # Собираем информацию о размерах
+            sizes = []
+            for param in product.findall('.//param'):
+                if param.get('name') == 'Размер':
+                    sizes.append(param.text)
+
+            # Собираем URL фотографий
+            images = []
+            for picture in product.findall('.//picture'):
+                if picture.text:
+                    images.append(picture.text)
+
+            # Формируем словарь с информацией о товаре
+            product_data = {
+                'Артикул': article,
+                'Товар': name,
+                'Модель': params['Модель'],
+                'Цена': f"{price} ₽",
+                'Старая Цена': f"{oldprice} ₽" if oldprice != "Нет данных" else "Нет данных",
+                'Сезон': params['Сезон'],
+                'Цвет': params['Цвет'],
+                'Категория': params['Категория'],
+                'Материал верха': params['Материал верха'],
+                'Материал подошвы': params['Материал подошвы'],
+                'Страна бренда': params['Страна бренда'],
+                'Пол': params['Пол'],
+                'Размер': ', '.join(sizes) if sizes else 'Нет данных',
+                'images': images  # Оставляем для отображения фотографий
+            }
+
+            return product_data
+
+        except Exception as e:
+            raise Exception(f"Ошибка при поиске товара: {str(e)}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
